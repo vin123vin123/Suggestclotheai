@@ -1,47 +1,47 @@
 import os
-from fastapi import FastAPI, HTTPException, Security, status, Request
+import json
+import urllib.request
+import urllib.error
+from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import urllib.request
-import json
 
 app = FastAPI(
     title="Clothing AI Assistant API",
     description="Secure proxy API for clothing and fashion inquiries powered by OpenRouter.",
     version="1.0.0",
-    docs_url="/docs",  # Swagger UI Documentation path
+    docs_url="/docs",  # Interactive Swagger UI Documentation path
     redoc_url="/redoc" # ReDoc Documentation path
 )
 
 # 1. ENFORCE HTTPS
-# Redirects all incoming HTTP traffic to secure HTTPS automatically
+# Automatically redirects all incoming HTTP traffic to secure HTTPS
 app.add_middleware(HTTPSRedirectMiddleware)
 
 # 2. CORS CONFIGURATION
-# Configured specifically to allow requests from your browser-side Wix subdomains
+# Configured to allow browser-side direct requests from your Wix subdomains
 origins = [
     "https://yourdomain.com",
-    "https://www.yourdomain.com",
-    "https://wixsite.com", # Replace with your exact Wix site URLs
+    "https://yourdomain.com",
+    "https://wixsite.com", # Replace with your exact Wix site domain strings
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Allows browser requests from these domains
+    allow_origins=origins,       # Allows browser requests from these specific origins
     allow_credentials=True,
-    allow_methods=["POST", "GET", "OPTIONS"], # Required HTTP methods
-    allow_headers=["*"],         # Allows all headers (including Content-Type/X-API-Key)
+    allow_methods=["POST", "GET", "OPTIONS"], 
+    allow_headers=["*"],         # Allows custom headers (Content-Type, X-API-Key)
 )
 
 # 3. AUTHENTICATION SCHEME
-# Expects a header named 'X-API-Key' to authorize requests to this API
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# Internal secret token protecting this specific endpoint (Set this in server environment variables)
+# Read variables securely from your platform environment dashboard settings
 MY_API_SECRET = os.environ.get("MY_API_SECRET", "default_secure_fallback_key_123")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
@@ -53,23 +53,39 @@ async def get_api_key(api_key: str = Security(api_key_header)):
         detail="Invalid or missing X-API-Key header credential."
     )
 
-# 4. REQUEST VALIDATION MODEL
+# 4. DATA STRUCT VALIDATION MODEL
 class ChatRequest(BaseModel):
     userPrompt: str
 
-# 5. API ENDPOINTS
+# 5. API ROUTE HANDLERS
+
+@app.get("/chat", response_class=JSONResponse)
+async def chat_status_check():
+    """
+    Status endpoint. Gracefully responds to standard browser calls (GET) 
+    instead of throwing internal server errors.
+    """
+    return JSONResponse(
+        content={
+            "status": "active",
+            "message": "The Clothing AI API is operational. Send a POST request containing an 'X-API-Key' header to chat."
+        },
+        status_code=200
+    )
+
 @app.post("/chat", response_class=JSONResponse)
 async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_key)):
     """
-    Secure chat proxy endpoint. Requires an X-API-Key header.
-    Restricts all conversation models specifically to clothing, apparel, and fashion.
+    Secure chat proxy endpoint. Binds conversational LLM scope tightly to 
+    clothing, garments, style advice, and textile design.
     """
     if not OPENROUTER_API_KEY:
-        raise HTTPException(status_code=500, detail="OpenRouter API Key configuration error on server side.")
+        print("Error: OPENROUTER_API_KEY variable is missing on the server.")
+        return JSONResponse(content={"error": "Server configuration mismatch."}, status_code=500)
 
     url = "https://openrouter.ai"
     
-    # Payload carrying the strict system instructions to bound the AI to clothing
+    # System payload context locking prompt to clothing queries only
     payload = {
         "model": "openrouter/free",
         "messages": [
@@ -100,12 +116,12 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         with urllib.request.urlopen(req) as response:
             res_data = json.loads(response.read().decode('utf-8'))
             ai_reply = res_data['choices'][0]['message']['content']
-            
-            # Formats and enforces standard JSON response schema back to Wix
             return JSONResponse(content={"reply": ai_reply}, status_code=200)
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
-        return JSONResponse(content={"error": f"OpenRouter Error: {error_body}"}, status_code=e.code)
+        print(f"OpenRouter HTTP Error status code {e.code}: {error_body}")
+        return JSONResponse(content={"error": f"Model layer down stream error: {error_body}"}, status_code=e.code)
     except Exception as e:
-        return JSONResponse(content={"error": f"Internal process failed: {str(e)}"}, status_code=500)
+        print(f"General internal crash: {str(e)}")
+        return JSONResponse(content={"error": f"Internal system failed to compute response."}, status_code=500)
