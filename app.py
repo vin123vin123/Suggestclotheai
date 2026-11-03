@@ -4,7 +4,6 @@ import urllib.request
 import urllib.error
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -13,35 +12,30 @@ app = FastAPI(
     title="Clothing AI Assistant API",
     description="Secure proxy API for clothing and fashion inquiries powered by OpenRouter.",
     version="1.0.0",
-    docs_url="/docs",  # Interactive Swagger UI Documentation path
-    redoc_url="/redoc" # ReDoc Documentation path
+    docs_url="/docs",  
+    redoc_url="/redoc" 
 )
 
-# 1. ENFORCE HTTPS
-# Automatically redirects all incoming HTTP traffic to secure HTTPS
-app.add_middleware(HTTPSRedirectMiddleware)
-
-# 2. CORS CONFIGURATION
-# Configured to allow browser-side direct requests from your Wix subdomains
+# CORS CONFIGURATION
 origins = [
     "https://yourdomain.com",
     "https://yourdomain.com",
-    "https://wixsite.com", # Replace with your exact Wix site domain strings
+    "https://wixsite.com", 
+    "*" # Keeps testing completely open for Wix frontend domains
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Allows browser requests from these specific origins
+    allow_origins=origins,       
     allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"], 
-    allow_headers=["*"],         # Allows custom headers (Content-Type, X-API-Key)
+    allow_headers=["*"],         
 )
 
-# 3. AUTHENTICATION SCHEME
+# AUTHENTICATION SCHEME
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# Read variables securely from your platform environment dashboard settings
 MY_API_SECRET = os.environ.get("MY_API_SECRET", "default_secure_fallback_key_123")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
@@ -53,18 +47,12 @@ async def get_api_key(api_key: str = Security(api_key_header)):
         detail="Invalid or missing X-API-Key header credential."
     )
 
-# 4. DATA STRUCT VALIDATION MODEL
 class ChatRequest(BaseModel):
     userPrompt: str
 
-# 5. API ROUTE HANDLERS
-
+# ROUTE HANDLERS
 @app.get("/chat", response_class=JSONResponse)
 async def chat_status_check():
-    """
-    Status endpoint. Gracefully responds to standard browser calls (GET) 
-    instead of throwing internal server errors.
-    """
     return JSONResponse(
         content={
             "status": "active",
@@ -99,7 +87,7 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
     
     req_body = json.dumps(payload).encode('utf-8')
     
-    # FIX: Added User-Agent and mandatory OpenRouter application headers to bypass Cloudflare 1010
+    # Custom Headers spoofing a standard desktop browser to bypass Cloudflare 1010 blocking layers
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -131,7 +119,7 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
                 ai_reply = res_data['choices'][0]['message']['content']
                 return JSONResponse(content={"reply": ai_reply}, status_code=200)
             else:
-                return JSONResponse(content={"error": "Unexpected JSON nesting returned by AI provider."}, status_code=502)
+                return JSONResponse(content={"error": "Unexpected JSON nesting structure returned by AI provider."}, status_code=502)
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
@@ -142,4 +130,3 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
     except Exception as e:
         print(f"General internal crash: {str(e)}")
         return JSONResponse(content={"error": "Internal server processing crash."}, status_code=500)
-]
