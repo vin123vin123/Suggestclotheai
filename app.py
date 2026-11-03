@@ -75,17 +75,12 @@ async def chat_status_check():
 
 @app.post("/chat", response_class=JSONResponse)
 async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_key)):
-    """
-    Secure chat proxy endpoint. Binds conversational LLM scope tightly to 
-    clothing, garments, style advice, and textile design.
-    """
     if not OPENROUTER_API_KEY:
-        print("Error: OPENROUTER_API_KEY variable is missing on the server.")
+        print("Error: OPENROUTER_API_KEY variable is missing on Render Environment Variables.")
         return JSONResponse(content={"error": "Server configuration mismatch."}, status_code=500)
 
     url = "https://openrouter.ai"
     
-    # System payload context locking prompt to clothing queries only
     payload = {
         "model": "openrouter/free",
         "messages": [
@@ -102,26 +97,49 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         ]
     }
     
+    req_body = json.dumps(payload).encode('utf-8')
+    
+    # FIX: Added User-Agent and mandatory OpenRouter application headers to bypass Cloudflare 1010
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "HTTP-Referer": "https://yourdomain.com", 
+        "X-OpenRouter-Title": "Clothing Assistant App"
+    }
+    
     req = urllib.request.Request(
         url,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        },
+        data=req_body,
+        headers=headers,
         method="POST"
     )
 
     try:
         with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            ai_reply = res_data['choices'][0]['message']['content']
-            return JSONResponse(content={"reply": ai_reply}, status_code=200)
+            raw_body = response.read().decode('utf-8')
+            
+            if not raw_body or raw_body.strip() == "":
+                return JSONResponse(content={"error": "OpenRouter returned an empty payload."}, status_code=502)
+            
+            try:
+                res_data = json.loads(raw_body)
+            except json.JSONDecodeError:
+                return JSONResponse(content={"error": "Received invalid non-JSON data from the AI provider."}, status_code=502)
+
+            if 'choices' in res_data and len(res_data['choices']) > 0:
+                ai_reply = res_data['choices'][0]['message']['content']
+                return JSONResponse(content={"reply": ai_reply}, status_code=200)
+            else:
+                return JSONResponse(content={"error": "Unexpected JSON nesting returned by AI provider."}, status_code=502)
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
         print(f"OpenRouter HTTP Error status code {e.code}: {error_body}")
-        return JSONResponse(content={"error": f"Model layer down stream error: {error_body}"}, status_code=e.code)
+        if e.code == 429:
+            return JSONResponse(content={"error": "OpenRouter free tier limit reached. Try again shortly."}, status_code=429)
+        return JSONResponse(content={"error": f"Model error code {e.code}: {error_body}"}, status_code=e.code)
     except Exception as e:
         print(f"General internal crash: {str(e)}")
-        return JSONResponse(content={"error": f"Internal system failed to compute response."}, status_code=500)
+        return JSONResponse(content={"error": "Internal server processing crash."}, status_code=500)
+]
