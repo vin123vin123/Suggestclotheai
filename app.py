@@ -17,7 +17,6 @@ app = FastAPI(
 )
 
 # CORS CONFIGURATION
-# Set to accept open client browser communication across Wix testing domains
 origins = ["*"]
 
 app.add_middleware(
@@ -63,7 +62,7 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         print("Error: OPENROUTER_API_KEY variable is missing on Render Environment Variables.")
         return JSONResponse(content={"error": "Server configuration mismatch."}, status_code=500)
 
-    url = "https://openrouter.ai"
+    url = "https://openrouter.ai/api/v1/chat/completions"
     
     payload = {
         "model": "openrouter/free",
@@ -83,7 +82,6 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
     
     req_body = json.dumps(payload).encode('utf-8')
     
-    # Custom Headers spoofing a standard desktop browser to bypass Cloudflare 1010 blocking layers
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY.strip()}",
         "Content-Type": "application/json",
@@ -111,14 +109,18 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             except json.JSONDecodeError:
                 return JSONResponse(content={"error": "Received invalid non-JSON data from the AI provider."}, status_code=502)
 
-            # Bulletproof extraction: Checks structure and parses index safely
+            # --- BULLETPROOF ROBUST PAYLOAD PARSING ---
             if 'choices' in res_data and len(res_data['choices']) > 0:
-                choice_item = res_data['choices'][0]
-                if 'message' in choice_item and 'content' in choice_item['message']:
-                    ai_reply = choice_item['message']['content']
+                choice = res_data['choices'][0]  # Access first array response safely
+                if 'message' in choice and 'content' in choice['message']:
+                    ai_reply = choice['message']['content']
                     return JSONResponse(content={"reply": ai_reply}, status_code=200)
             
-            return JSONResponse(content={"error": "Unexpected JSON nesting structure returned by AI provider.", "raw": res_data}, status_code=502)
+            # Alternate parsing structural check for certain OpenRouter free variant pipelines
+            if 'output' in res_data:
+                return JSONResponse(content={"reply": str(res_data['output'])}, status_code=200)
+
+            return JSONResponse(content={"error": "Unexpected structure returned by AI provider.", "details": res_data}, status_code=502)
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
@@ -128,4 +130,4 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
         return JSONResponse(content={"error": f"Model error code {e.code}: {error_body}"}, status_code=e.code)
     except Exception as e:
         print(f"General internal crash: {str(e)}")
-        return JSONResponse(content={"error": "Internal server processing crash."}, status_code=500)
+        return JSONResponse(content={"error": f"Internal system failed processing: {str(e)}"}, status_code=500)
