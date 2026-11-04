@@ -17,12 +17,8 @@ app = FastAPI(
 )
 
 # CORS CONFIGURATION
-origins = [
-    "https://yourdomain.com",
-    "https://yourdomain.com",
-    "https://wixsite.com", 
-    "*" # Keeps testing completely open for Wix frontend domains
-]
+# Set to accept open client browser communication across Wix testing domains
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,7 +85,7 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
     
     # Custom Headers spoofing a standard desktop browser to bypass Cloudflare 1010 blocking layers
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY.strip()}",
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "HTTP-Referer": "https://yourdomain.com", 
@@ -115,11 +111,14 @@ async def chat_endpoint(request: ChatRequest, api_key: str = Security(get_api_ke
             except json.JSONDecodeError:
                 return JSONResponse(content={"error": "Received invalid non-JSON data from the AI provider."}, status_code=502)
 
+            # Bulletproof extraction: Checks structure and parses index safely
             if 'choices' in res_data and len(res_data['choices']) > 0:
-                ai_reply = res_data['choices'][0]['message']['content']
-                return JSONResponse(content={"reply": ai_reply}, status_code=200)
-            else:
-                return JSONResponse(content={"error": "Unexpected JSON nesting structure returned by AI provider."}, status_code=502)
+                choice_item = res_data['choices'][0]
+                if 'message' in choice_item and 'content' in choice_item['message']:
+                    ai_reply = choice_item['message']['content']
+                    return JSONResponse(content={"reply": ai_reply}, status_code=200)
+            
+            return JSONResponse(content={"error": "Unexpected JSON nesting structure returned by AI provider.", "raw": res_data}, status_code=502)
             
     except urllib.error.HTTPError as e:
         error_body = e.read().decode('utf-8')
